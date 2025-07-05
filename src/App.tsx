@@ -169,7 +169,7 @@ const MidiConfigurator = () => {
         newSelectable.chasis.push(child);
         newChosenColors.chasis = 'Gris';
       }
-      else if (meshName.includes('boton')) {
+      else if (meshName.includes('boton') || meshName.includes('aro')) {
         const defaultColor = 'Negro';
         child.material = new THREE.MeshStandardMaterial({ 
           color: PALETTES.buttons[defaultColor].hex, 
@@ -249,6 +249,7 @@ const MidiConfigurator = () => {
         // Guardar mixer y animaciones
         mixerRef.current = new THREE.AnimationMixer(model);
         animationsRef.current = gltf.animations;
+        console.log('Animaciones cargadas:', gltf.animations.map((a: THREE.AnimationClip) => a.name));
         // Animación de introducción
         // gsap.to(model.position, { 
         //   y: `+=${0.05}`, 
@@ -362,22 +363,177 @@ const MidiConfigurator = () => {
   }, []);
 
   // Función para reproducir animación de botón
-  const playButtonAnimation = useCallback((buttonName: string) => {
+  const playButtonAnimation = useCallback((buttonIndex: number) => {
     if (!mixerRef.current || !animationsRef.current.length) return;
-    // Busca la animación por nombre (case-insensitive, incluye el nombre del botón)
-    const clip = animationsRef.current.find(a => a.name.toLowerCase().includes(buttonName.toLowerCase()));
+
+    // Nombre esperado del clip
+    const buttonName = `Boton${buttonIndex}`;
+
+    // Busca el clip de animación ignorando mayúsculas, minúsculas y espacios
+    let clip = animationsRef.current.find(a =>
+      a.name.replace(/\s/g, '').toLowerCase() === buttonName.replace(/\s/g, '').toLowerCase()
+    );
+    if (!clip) return;
+
+    // Detén todas las animaciones previas
+    mixerRef.current.stopAllAction();
+
+    // Reproduce el clip sobre el modelo completo
+    const action = mixerRef.current.clipAction(clip);
+    action.reset();
+    action.setLoop(THREE.LoopOnce, 1);
+    action.clampWhenFinished = true;
+    action.play();
+  }, []);
+
+  // Función específica para Boton7
+  const playBoton7Animation = useCallback(() => {
+    if (!mixerRef.current || !animationsRef.current.length) return;
+    
+    // Buscar específicamente elementos del Boton7 de manera más amplia
+    const boton7Elements: THREE.Mesh[] = [];
+    if (modelRef.current) {
+      modelRef.current.traverse((child: THREE.Object3D) => {
+        if (child instanceof THREE.Mesh) {
+          const childName = child.name.toLowerCase();
+          if (childName.includes('boton7') || 
+              childName.includes('boton 7') || 
+              childName.includes('7') ||
+              childName.includes('button7') ||
+              childName.includes('button 7')) {
+            boton7Elements.push(child);
+          }
+        }
+      });
+    }
+    
+    // Buscar animación específica para Boton7
+    let clip = animationsRef.current.find(a => 
+      a.name.toLowerCase().includes('boton7') || 
+      a.name.toLowerCase().includes('boton 7') || 
+      a.name.toLowerCase().includes('7') ||
+      a.name.toLowerCase().includes('button7') ||
+      a.name.toLowerCase().includes('button 7')
+    );
+    
+    // Si no encuentra, usar la primera animación
+    if (!clip && animationsRef.current.length > 0) {
+      clip = animationsRef.current[0];
+    }
+    
     if (clip) {
       const action = mixerRef.current.clipAction(clip);
       action.reset();
       action.setLoop(THREE.LoopOnce, 1);
       action.clampWhenFinished = true;
-      action.play();
+      
+      // Preservar colores de todos los elementos del Boton7
+      const originalColors: { mesh: THREE.Mesh; color: THREE.Color; emissive: THREE.Color }[] = [];
+      
+      boton7Elements.forEach(mesh => {
+        if (mesh.material) {
+          const material = mesh.material as THREE.MeshStandardMaterial;
+          originalColors.push({
+            mesh,
+            color: material.color.clone(),
+            emissive: material.emissive.clone()
+          });
+        }
+      });
+      
+      // Filtrar la animación para excluir propiedades de color
+      const filteredClip = clip.clone();
+      filteredClip.tracks = filteredClip.tracks.filter(track => 
+        !track.name.includes('material') && 
+        !track.name.includes('color') && 
+        !track.name.includes('emissive')
+      );
+      
+      // Usar la animación filtrada
+      const filteredAction = mixerRef.current.clipAction(filteredClip);
+      filteredAction.reset();
+      filteredAction.setLoop(THREE.LoopOnce, 1);
+      filteredAction.clampWhenFinished = true;
+      filteredAction.play();
+      
+      // Mantener el color durante toda la animación para todos los elementos
+      const preserveColor = () => {
+        if (filteredAction.isRunning()) {
+          originalColors.forEach(({ mesh, color, emissive }) => {
+            if (mesh.material) {
+              const material = mesh.material as THREE.MeshStandardMaterial;
+              material.color.copy(color);
+              material.emissive.copy(emissive);
+            }
+          });
+          requestAnimationFrame(preserveColor);
+        } else {
+          // Asegurar que el color se mantenga después de la animación
+          originalColors.forEach(({ mesh, color, emissive }) => {
+            if (mesh.material) {
+              const material = mesh.material as THREE.MeshStandardMaterial;
+              material.color.copy(color);
+              material.emissive.copy(emissive);
+            }
+          });
+        }
+      };
+      preserveColor();
+      
+      // Manejar superposición ocultando temporalmente elementos no relacionados
+      const allMeshes: THREE.Mesh[] = [];
+      if (modelRef.current) {
+        modelRef.current.traverse((child: THREE.Object3D) => {
+          if (child instanceof THREE.Mesh) {
+            allMeshes.push(child);
+          }
+        });
+      }
+      
+      // Ocultar elementos no relacionados durante la animación
+      const nonButtonElements = allMeshes.filter(mesh => !boton7Elements.includes(mesh));
+      const originalVisibility: { mesh: THREE.Mesh; visible: boolean }[] = [];
+      
+      nonButtonElements.forEach(mesh => {
+        originalVisibility.push({ mesh, visible: mesh.visible });
+        mesh.visible = false;
+      });
+      
+      // Restaurar visibilidad después de la animación
+      const restoreVisibility = () => {
+        if (filteredAction.isRunning()) {
+          requestAnimationFrame(restoreVisibility);
+        } else {
+          originalVisibility.forEach(({ mesh, visible }) => {
+            mesh.visible = visible;
+          });
+        }
+      };
+      restoreVisibility();
     }
+  }, []);
+
+  // Función para encontrar el aro asociado a un botón
+  const findAssociatedRing = useCallback((buttonName: string): THREE.Mesh | null => {
+    if (!modelRef.current) return null;
+    
+    // Buscar un aro que tenga un nombre similar al botón
+    let associatedRing: THREE.Mesh | null = null;
+    modelRef.current.traverse((child: THREE.Object3D) => {
+      if (child instanceof THREE.Mesh && child.name.toLowerCase().includes('aro')) {
+        // Buscar coincidencia por número o posición
+        const buttonNumber = buttonName.match(/\d+/);
+        const ringNumber = child.name.match(/\d+/);
+        if (buttonNumber && ringNumber && buttonNumber[0] === ringNumber[0]) {
+          associatedRing = child;
+        }
+      }
+    });
+    return associatedRing;
   }, []);
 
   // Manejo de clicks en el canvas
   const handleCanvasClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
-    if (currentView === 'normal' || currentView === 'chasis') return;
     if (!cameraRef.current || !rendererRef.current) return;
 
     const raycaster = new THREE.Raycaster();
@@ -388,61 +544,149 @@ const MidiConfigurator = () => {
     pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     
     raycaster.setFromCamera(pointer, cameraRef.current);
-    const objectsToIntersect = selectable[currentView] || [];
+    
+    // Determinar qué objetos intersectar según la vista
+    let objectsToIntersect: THREE.Mesh[] = [];
+    if (currentView === 'buttons') {
+      objectsToIntersect = selectable.buttons;
+    } else if (currentView === 'knobs') {
+      objectsToIntersect = selectable.knobs;
+    } else if (currentView === 'chasis') {
+      objectsToIntersect = selectable.chasis;
+    } else if (currentView === 'normal') {
+      // En vista normal, permitir clicks en botones para animación
+      objectsToIntersect = selectable.buttons;
+    }
     
     if (objectsToIntersect.length === 0) return;
     
     const intersects = raycaster.intersectObjects(objectsToIntersect, false);
-    // Limpia el resaltado de todos los botones
+    // Limpia el resaltado de todos los botones (solo en vista de botones)
     if (currentView === 'buttons') {
       selectable.buttons.forEach(btn => setEmissive(btn, 0x000000));
     }
-    setEmissive(selectedForColoring, 0x000000);
+    if (selectedForColoring && currentView !== 'normal') {
+      setEmissive(selectedForColoring, 0x000000);
+    }
     
     if (intersects.length > 0) {
       const selectedObject = intersects[0].object as THREE.Mesh;
+      
+      // En vista normal, solo reproducir animación sin selección
+      if (currentView === 'normal') {
+        if (selectedObject.name.toLowerCase().includes('boton')) {
+          // Caso especial para Boton7
+          if (selectedObject.name.toLowerCase().includes('boton7') || selectedObject.name.toLowerCase().includes('7')) {
+            playBoton7Animation();
+          } else {
+            // Usar el nombre del botón para la animación
+            const buttonName = selectedObject.name;
+            const buttonNumber = parseInt(buttonName.match(/\d+/)?.[0] || '1', 10);
+            playButtonAnimation(buttonNumber);
+          }
+        }
+        return;
+      }
+      
       if (currentView === 'buttons' && event.shiftKey) {
         if (selectedButtons.length === 0 && selectedForColoring && selectedForColoring !== selectedObject) {
-          setEmissive(selectedForColoring, 0x666660);
-          setEmissive(selectedObject, 0x666660);
           setSelectedButtons([selectedForColoring, selectedObject]);
           setSelectedForColoring(null);
+          // Aplicar glow a ambos botones seleccionados
+          setEmissive(selectedForColoring, 0x444444);
+          setEmissive(selectedObject, 0x444444);
           // Reproducir animación de ambos botones
-          playButtonAnimation(selectedForColoring.name);
-          playButtonAnimation(selectedObject.name);
+          if (selectedForColoring.name.toLowerCase().includes('boton7') || selectedForColoring.name.toLowerCase().includes('7')) {
+            playBoton7Animation();
+          } else {
+            const buttonNumber = parseInt(selectedForColoring.name.match(/\d+/)?.[0] || '1', 10);
+            playButtonAnimation(buttonNumber);
+          }
+          if (selectedObject.name.toLowerCase().includes('boton7') || selectedObject.name.toLowerCase().includes('7')) {
+            playBoton7Animation();
+          } else {
+            const buttonNumber = parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10);
+            playButtonAnimation(buttonNumber);
+          }
         } else {
           setSelectedForColoring(null);
           setSelectedButtons(prev => {
             if (prev.length === 0) {
-              setEmissive(selectedObject, 0x666660);
-              playButtonAnimation(selectedObject.name);
+              setEmissive(selectedObject, 0x444444);
+              if (selectedObject.name.toLowerCase().includes('boton7') || selectedObject.name.toLowerCase().includes('7')) {
+                playBoton7Animation();
+              } else {
+                const buttonNumber = parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10);
+                playButtonAnimation(buttonNumber);
+              }
               return [selectedObject];
             }
             const already = prev.includes(selectedObject);
             let newSelected;
             if (already) {
               newSelected = prev.filter(obj => obj !== selectedObject);
+              // Quitar glow del botón deseleccionado
+              setEmissive(selectedObject, 0x000000);
             } else {
               newSelected = [...prev, selectedObject];
-              playButtonAnimation(selectedObject.name);
+              setEmissive(selectedObject, 0x444444);
+              if (selectedObject.name.toLowerCase().includes('boton7') || selectedObject.name.toLowerCase().includes('7')) {
+                playBoton7Animation();
+              } else {
+                const buttonNumber = parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10);
+                playButtonAnimation(buttonNumber);
+              }
             }
-            // Resalta los seleccionados
-            newSelected.forEach(btn => setEmissive(btn, 0x666660));
+            // Aplicar glow a todos los botones seleccionados
+            newSelected.forEach(btn => setEmissive(btn, 0x444444));
             return newSelected;
           });
         }
       } else {
         setSelectedButtons([]);
-        setSelectedForColoring(selectedObject);
-        setEmissive(selectedObject, 0x666660);
-        // Reproducir animación del botón seleccionado
-        if (currentView === 'buttons') playButtonAnimation(selectedObject.name);
+        
+        // Si es un aro, seleccionar también su botón asociado
+        if (currentView === 'buttons' && selectedObject.name.toLowerCase().includes('aro')) {
+          // Buscar el botón asociado al aro
+          const buttonNumber = parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10);
+          const associatedButton = selectable.buttons.find(btn => 
+            btn.name.toLowerCase().includes('boton') && 
+            btn.name.includes(buttonNumber.toString())
+          );
+          if (associatedButton) {
+            // Seleccionar el botón asociado en lugar del aro
+            setSelectedForColoring(associatedButton);
+            // Aplicar glow al botón seleccionado
+            setEmissive(associatedButton, 0x444444);
+            // Reproducir animación del botón asociado
+            playButtonAnimation(parseInt(associatedButton.name.match(/\d+/)?.[0] || '1', 10));
+          } else {
+            // Si no encuentra el botón, seleccionar el aro
+            setSelectedForColoring(selectedObject);
+            setEmissive(selectedObject, 0x444444);
+            playButtonAnimation(parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10));
+          }
+        } else {
+          // Si es un botón, seleccionarlo normalmente
+          setSelectedForColoring(selectedObject);
+          // Aplicar glow al botón seleccionado
+          setEmissive(selectedObject, 0x444444);
+          // Reproducir animación del botón seleccionado
+          if (currentView === 'buttons') {
+            if (selectedObject.name.toLowerCase().includes('boton7') || selectedObject.name.toLowerCase().includes('7')) {
+              playBoton7Animation();
+            } else {
+              const buttonNumber = parseInt(selectedObject.name.match(/\d+/)?.[0] || '1', 10);
+              playButtonAnimation(buttonNumber);
+            }
+          }
+        }
       }
     } else {
       setSelectedForColoring(null);
       setSelectedButtons([]);
     }
-  }, [currentView, selectable, selectedForColoring, setEmissive, selectedButtons, playButtonAnimation]);
+  }, [currentView, selectable, selectedForColoring, setEmissive, selectedButtons, playButtonAnimation, playBoton7Animation, findAssociatedRing]);
 
   // Cambiar vista
   const changeView = useCallback((viewName: 'normal' | 'chasis' | 'buttons' | 'knobs') => {
@@ -457,12 +701,22 @@ const MidiConfigurator = () => {
     if (!cameraRef.current || !controlsRef.current) return;
 
     let targetPos: THREE.Vector3, targetLookAt: THREE.Vector3, enableOrbit: boolean;
+    
+    // Guardar la posición original si no existe
+    if (!(cameraRef.current as any)._originalPosition) {
+      (cameraRef.current as any)._originalPosition = cameraRef.current.position.clone();
+    }
+    const originalPos = (cameraRef.current as any)._originalPosition as THREE.Vector3;
+
     if (viewName === 'normal') {
-      targetPos = CAMERA_VIEWS.normal.pos;
+      // Para la vista normal, usar la posición original
+      targetPos = originalPos;
       targetLookAt = CAMERA_VIEWS.normal.target;
       enableOrbit = true;
     } else {
-      targetPos = CAMERA_VIEWS.top.pos;
+      // Para otras vistas, usar la posición superior y ajustar para el menú
+      targetPos = CAMERA_VIEWS.top.pos.clone();
+      targetPos.x -= 0.4; // Ajustar para el menú lateral
       targetLookAt = CAMERA_VIEWS.top.target;
       enableOrbit = false;
     }
@@ -499,9 +753,16 @@ const MidiConfigurator = () => {
       selectedButtons.forEach(btn => {
         (btn.material as THREE.MeshStandardMaterial).color.set(colorData.hex);
         newChosenColors.buttons[btn.name] = colorName;
+        
+        // Aplicar el mismo color al aro asociado
+        const associatedRing = findAssociatedRing(btn.name);
+        if (associatedRing && associatedRing.material) {
+          (associatedRing.material as THREE.MeshStandardMaterial).color.set(colorData.hex);
+          newChosenColors.buttons[associatedRing.name] = colorName;
+        }
       });
       setChosenColors(newChosenColors);
-      // Quita el resaltado visual de los botones seleccionados
+      // Quitar glow de los botones seleccionados
       selectedButtons.forEach(btn => setEmissive(btn, 0x000000));
       setSelectedButtons([]); // Deselecciona después de aplicar color
       return;
@@ -518,11 +779,23 @@ const MidiConfigurator = () => {
       newChosenColors.chasis = colorName;
     } else if (selectable.buttons.includes(selectedForColoring)) {
       newChosenColors.buttons[selectedName] = colorName;
+      
+      // Aplicar el mismo color al aro asociado si es un botón
+      if (selectedName.toLowerCase().includes('boton')) {
+        const associatedRing = findAssociatedRing(selectedName);
+        if (associatedRing && associatedRing.material) {
+          (associatedRing.material as THREE.MeshStandardMaterial).color.set(colorData.hex);
+          newChosenColors.buttons[associatedRing.name] = colorName;
+        }
+      }
+      
+      // Quitar glow del botón seleccionado
+      setEmissive(selectedForColoring, 0x000000);
     } else if (selectable.knobs.includes(selectedForColoring)) {
       newChosenColors.knobs[selectedName] = colorName;
     }
     setChosenColors(newChosenColors);
-  }, [selectedForColoring, selectedButtons, chosenColors, selectable, currentView]);
+  }, [selectedForColoring, selectedButtons, chosenColors, selectable, currentView, findAssociatedRing]);
 
   // Abrir modal de pago y capturar imagen con vista frontal fija
   const handleOpenPayment = useCallback(() => {
@@ -587,27 +860,8 @@ const MidiConfigurator = () => {
     sendConfigToWix();
   }, [sendConfigToWix]);
 
-  // Centrado de cámara según el estado del menú lateral
+  // Actualizar la referencia de la vista anterior
   useEffect(() => {
-    if (!cameraRef.current) return;
-    // Guarda la posición original en un ref estático
-    if (!(cameraRef.current as any)._originalPosition) {
-      (cameraRef.current as any)._originalPosition = cameraRef.current.position.clone();
-    }
-    const original = (cameraRef.current as any)._originalPosition as THREE.Vector3;
-    // Solo mover la cámara si el cambio es entre 'normal' y otro estado
-    if (
-      (prevViewRef.current === 'normal' && currentView !== 'normal') ||
-      (prevViewRef.current !== 'normal' && currentView === 'normal')
-    ) {
-      if (currentView !== 'normal') {
-        cameraRef.current.position.x = original.x - 0.4;
-        cameraRef.current.updateProjectionMatrix();
-      } else {
-        cameraRef.current.position.copy(original);
-        cameraRef.current.updateProjectionMatrix();
-      }
-    }
     prevViewRef.current = currentView;
   }, [currentView]);
 
